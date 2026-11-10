@@ -1,0 +1,6 @@
+tracepoint:syscalls:sys_enter_execve
+/comm == "bash"/
+{
+    printf("%d %s -> %s : ", pid, comm, str(args.filename));
+    join(args.argv);
+}

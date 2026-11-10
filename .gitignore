@@ -1,0 +1,14 @@
+# Build output
+.output/
+*.o
+
+# Generated BPF files
+*.skel.h
+
+# Compiled programs
+/03-exec-logger/exec_logger
+/04-tcp-logger/tcp_logger
+/05-xdp-counter/xdp_counter
+
+# Local files
+.vscode/

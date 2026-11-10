@@ -1,0 +1,12 @@
+kprobe:do_nanosleep
+/comm == "sleep"/
+{
+    @start[tid] = nsecs;
+}
+
+kretprobe:do_nanosleep
+/comm == "sleep" && @start[tid]/
+{
+    printf("%s slept %d ms\n", comm, (nsecs - @start[tid]) / 1000000);
+    delete(@start, tid);
+}
