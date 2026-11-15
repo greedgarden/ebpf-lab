@@ -39,6 +39,11 @@ int nf_prog(struct bpf_nf_ctx *ctx)
 	struct counters *c;
 	__u32 key;
 
+	// Skip loopback traffic early: it is always local and only adds noise.
+	// lo is always ifindex 1 (LOOPBACK_IFINDEX).
+	if (ctx->state->in && ctx->state->in->ifindex == 1)
+		return NF_ACCEPT;
+
 	if (ctx->state->hook >= NF_INET_NUMHOOKS)
 		return NF_ACCEPT;
 
