@@ -47,9 +47,6 @@ int nf_prog(struct bpf_nf_ctx *ctx)
 	if (!c)
 		return NF_ACCEPT;
 
-	c->packets++;
-	c->bytes += ctx->skb->len;
-
 	/* At IPv4 netfilter hooks, offset 0 is the start of the IP header. */
 	if (bpf_dynptr_from_skb((struct __sk_buff *)ctx->skb, 0, &ptr))
 		return NF_ACCEPT;
@@ -64,6 +61,16 @@ int nf_prog(struct bpf_nf_ctx *ctx)
 	if (ip->saddr != match_ip.addr)
 		return NF_ACCEPT;
 
+	// drop icmp packets
+	if (ip->protocol == IPPROTO_ICMP && ctx->state->hook == NF_INET_LOCAL_IN) {
+		c->drops++;
+		bpf_printk("dropping icmp packet from %pI4 to %pI4 (hook=%u proto=%u)",
+			&ip->saddr, &ip->daddr, ctx->state->hook, ip->protocol);
+		return NF_DROP;
+	}
+
+	c->packets++;
+	c->bytes += ctx->skb->len;
 	bpf_printk("hook=%u proto=%u src=%pI4 dst=%pI4",
 		   ctx->state->hook, ip->protocol, &ip->saddr, &ip->daddr);
 

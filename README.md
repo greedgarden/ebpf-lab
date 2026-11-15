@@ -13,6 +13,7 @@ All folders were tested on WSL2 with Ubuntu 26.04 and Linux kernel 6.18.
 | `03-exec-logger/` | C tool that logs `execve` calls using libbpf and a ring buffer |
 | `04-tcp-logger/` | C tool that logs outgoing IPv4 TCP connections |
 | `05-xdp-counter/` | XDP packet and byte counter, tested on a veth pair with `setup-net.sh` |
+| [`06-nf-drop/`](06-nf-drop/README.md) | Netfilter BPF program attached at PRE_ROUTING and LOCAL_IN that reads IPv4 headers and drops ICMP from a test address. See its README for the steps and results |
 
 ## Clone
 

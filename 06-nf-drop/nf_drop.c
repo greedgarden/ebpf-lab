@@ -27,9 +27,11 @@ static int read_totals(struct nf_drop_bpf *skel, struct counters *values,
 
 	totals[key].packets = 0;
 	totals[key].bytes = 0;
+	totals[key].drops = 0;
 	for (i = 0; i < ncpus; i++) {
 		totals[key].packets += values[i].packets;
 		totals[key].bytes += values[i].bytes;
+		totals[key].drops += values[i].drops;
 	}
 	return 0;
 }
@@ -82,7 +84,8 @@ int main(void)
 		goto cleanup;
 	}
 
-	printf("Counting packets on %s... Press Ctrl-C to stop.\n", "prerouting");
+	printf("Handling packets from Netfilter hooks.\n"
+	       "Press Ctrl-C to stop.\n");
 
 	while (!stop) {
 		sleep(1);
@@ -97,8 +100,8 @@ int main(void)
 			fprintf(stderr, "Failed to read counters: %d\n", err);
 			break;
 		}
-		printf("PRE_ROUTING: packets=%llu bytes=%llu\n", totals[NF_INET_PRE_ROUTING].packets, totals[NF_INET_PRE_ROUTING].bytes);
-		printf("LOCAL_IN: packets=%llu bytes=%llu\n", totals[NF_INET_LOCAL_IN].packets, totals[NF_INET_LOCAL_IN].bytes);
+		printf("PRE_ROUTING: packets=%llu bytes=%llu drops=%llu\n", totals[NF_INET_PRE_ROUTING].packets, totals[NF_INET_PRE_ROUTING].bytes, totals[NF_INET_PRE_ROUTING].drops);
+		printf("LOCAL_IN: packets=%llu bytes=%llu drops=%llu\n", totals[NF_INET_LOCAL_IN].packets, totals[NF_INET_LOCAL_IN].bytes, totals[NF_INET_LOCAL_IN].drops);
 	}
 
 cleanup:
