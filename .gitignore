@@ -9,6 +9,8 @@
 /03-exec-logger/exec_logger
 /04-tcp-logger/tcp_logger
 /05-xdp-counter/xdp_counter
+/06-nf-drop/nf_drop
+/06-nf-drop/vmlinux.h
 
 # Local files
 .vscode/
