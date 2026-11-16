@@ -11,6 +11,8 @@
 /05-xdp-counter/xdp_counter
 /06-nf-drop/nf_drop
 /06-nf-drop/vmlinux.h
+/07-hook-compare/vmlinux.h
+/07-hook-compare/hook_cmp
 
 # Local files
 .vscode/
