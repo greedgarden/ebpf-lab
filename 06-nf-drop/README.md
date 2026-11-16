@@ -102,6 +102,30 @@ An earlier version dropped ICMP at the first hook it reached, which is PRE_ROUTI
 
 To try this again, remove `ctx->state->hook == NF_INET_LOCAL_IN` from the drop condition in `nf_drop.bpf.c`.
 
+### Packets that never reach LOCAL_IN
+
+A packet to an address that is not on this host stops at the routing decision, before LOCAL_IN. To test this, give the namespace a default route through the host and ping an outside address:
+
+```bash
+sudo ip netns exec xdp-test ip route add default via 10.200.0.1
+nstat -n
+sudo ip netns exec xdp-test ping -c 3 8.8.8.8
+nstat | grep -iE "InAddrErrors|InNoRoutes|OutDestUnreachs"
+```
+
+IP forwarding is off on the host (`/proc/sys/net/ipv4/ip_forward` is `0`). Ping reports 100% packet loss, and three sources agree that the 3 echo requests were dropped between PRE_ROUTING and LOCAL_IN:
+
+- **BPF counters:** `PRE_ROUTING: packets=3 bytes=252 drops=0` and `LOCAL_IN: packets=0 bytes=0 drops=0`. The drop rule at LOCAL_IN never ran, because the packets never got there.
+- **trace_pipe:** three lines with `hook=0 proto=1 src=10.200.0.2 dst=8.8.8.8`, and no `hook=1` lines.
+- **Kernel counters:** `nstat` shows `IpInAddrErrors 3`. `OutDestUnreachs` did not change, so the host did not send an ICMP error back, and ping shows only timeouts.
+
+`ip route get` shows the routing result for the same packet:
+
+```
+$ ip route get 8.8.8.8 from 10.200.0.2 iif veth0
+RTNETLINK answers: No route to host
+```
+
 ### Other traffic is not dropped
 
 With `python3 -m http.server 8000 --bind 10.200.0.1` on the host, `curl` from the namespace returned HTTP 200. Both hooks counted 7 TCP packets (451 bytes) from `10.200.0.2`, and `trace_pipe` showed `proto=6` at hook 0 and hook 1 for each packet.
