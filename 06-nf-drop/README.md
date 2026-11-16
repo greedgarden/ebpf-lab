@@ -13,8 +13,9 @@ veth0 → PRE_ROUTING → routing decision ─┬→ LOCAL_IN → local socket
 
 - **One program, two links.** `nf_drop.c` loads one `SEC("netfilter")` program and attaches it twice with `bpf_program__attach_netfilter()`: once at `NF_INET_PRE_ROUTING` and once at `NF_INET_LOCAL_IN`, both with priority 200. The program reads `ctx->state->hook` to know which hook called it.
 - **Reading the packet.** The program uses the `bpf_dynptr_from_skb()` and `bpf_dynptr_slice()` kfuncs to read the IP header safely. At IPv4 netfilter hooks, offset 0 is the start of the IP header.
-- **Rule.** Packets from `10.200.0.2` are counted per hook. ICMP packets from that address are dropped at LOCAL_IN; everything else is accepted.
-- **Counters.** A per-CPU array map holds `packets`, `bytes`, and `drops` for each hook. User space adds up the per-CPU values once per second. Only packets from `10.200.0.2` are counted.
+- **Rule.** ICMP packets from the source address are dropped at one hook; everything else is accepted. The source address and the hook are command-line options (see [Run](#run)). By default, ICMP from `10.200.0.2` is dropped at LOCAL_IN.
+- **Passing the rule to the BPF program.** The rule is stored in two `const volatile` global variables, `target_saddr` and `drop_hook`. libbpf puts them in the `.rodata` map, and the skeleton exposes them as `skel->rodata`. `nf_drop.c` opens the skeleton, sets the values, then loads it. After loading, the values are read-only.
+- **Counters.** A per-CPU array map holds `packets`, `bytes`, and `drops` for each hook. Only packets from the source address are counted, and loopback traffic is skipped. `packets` and `bytes` count accepted packets; a dropped packet is counted only in `drops`. User space adds up the per-CPU values once per second.
 
 ## Requirements
 
@@ -50,6 +51,26 @@ sudo ./nf_drop
 
 `setup-net.sh` creates a `xdp-test` network namespace connected by a veth pair: `10.200.0.2` in the namespace, `10.200.0.1` on the host.
 
+`nf_drop` takes these options:
+
+| Option | Default | Description |
+|---|---|---|
+| `--src IPV4` | `10.200.0.2` | Source address to count and drop |
+| `--drop-at prerouting\|localin` | `localin` | Hook where ICMP from the source address is dropped |
+| `-h`, `--help` | | Show usage |
+
+For example, to drop at PRE_ROUTING instead:
+
+```bash
+sudo ./nf_drop --drop-at prerouting
+```
+
+The program prints the active rule when it starts:
+
+```
+Dropping ICMP packets from 10.200.0.2 at prerouting hook.
+```
+
 Terminal 2: watch the trace output.
 
 ```bash
@@ -78,9 +99,9 @@ sudo ../05-xdp-counter/setup-net.sh down
 
 ## Results
 
-### Drop at LOCAL_IN (current code)
+### Drop at LOCAL_IN (`--drop-at localin`, the default)
 
-After `ping -c 3`, ping reports 100% packet loss, and the counters show:
+After `ping -c 3 10.200.0.1`, ping reports 100% packet loss, and the counters show:
 
 ```
 PRE_ROUTING: packets=3 bytes=252 drops=0
@@ -96,11 +117,16 @@ bpf_trace_printk: dropping icmp packet from 10.200.0.2 to 10.200.0.1 (hook=1 pro
 
 The packet passed PRE_ROUTING and the routing decision, and was dropped only when it reached LOCAL_IN.
 
-### Drop at PRE_ROUTING (earlier version)
+### Drop at PRE_ROUTING (`--drop-at prerouting`)
 
-An earlier version dropped ICMP at the first hook it reached, which is PRE_ROUTING. That version counted every packet at each hook, before the drop decision. After `ping -c 3`, PRE_ROUTING had counted 3 more packets than LOCAL_IN. The 3 echo requests were dropped at PRE_ROUTING, so the program never ran for them at LOCAL_IN.
+After `ping -c 3 10.200.0.1`, ping reports 100% packet loss, and the counters show:
 
-To try this again, remove `ctx->state->hook == NF_INET_LOCAL_IN` from the drop condition in `nf_drop.bpf.c`.
+```
+PRE_ROUTING: packets=0 bytes=0 drops=3
+LOCAL_IN: packets=0 bytes=0 drops=0
+```
+
+The 3 echo requests were dropped at PRE_ROUTING, so the program never ran for them at LOCAL_IN. Ping fails in both modes, but in this mode the packets are dropped before the routing decision.
 
 ### Packets that never reach LOCAL_IN
 
@@ -117,7 +143,7 @@ IP forwarding is off on the host (`/proc/sys/net/ipv4/ip_forward` is `0`). Ping 
 
 - **BPF counters:** `PRE_ROUTING: packets=3 bytes=252 drops=0` and `LOCAL_IN: packets=0 bytes=0 drops=0`. The drop rule at LOCAL_IN never ran, because the packets never got there.
 - **trace_pipe:** three lines with `hook=0 proto=1 src=10.200.0.2 dst=8.8.8.8`, and no `hook=1` lines.
-- **Kernel counters:** `nstat` shows `IpInAddrErrors 3`. `OutDestUnreachs` did not change, so the host did not send an ICMP error back, and ping shows only timeouts.
+- **Kernel counters:** `nstat` shows `IpInAddrErrors 3`. This counter, defined in RFC 1213, counts packets discarded because their destination is not an address this host accepts. On a host that does not forward packets, that includes any destination that is not a local address. `OutDestUnreachs` did not change, so the host did not send an ICMP error back, and ping shows only timeouts.
 
 `ip route get` shows the routing result for the same packet:
 
@@ -125,6 +151,19 @@ IP forwarding is off on the host (`/proc/sys/net/ipv4/ip_forward` is `0`). Ping 
 $ ip route get 8.8.8.8 from 10.200.0.2 iif veth0
 RTNETLINK answers: No route to host
 ```
+
+With `--drop-at prerouting`, the same ping is dropped by the BPF program instead, before the routing decision. Ping still reports 100% packet loss, but the evidence changes:
+
+- **BPF counters:** `PRE_ROUTING: packets=0 bytes=0 drops=3` and `LOCAL_IN: packets=0 bytes=0 drops=0`.
+- **trace_pipe:** three lines like this one:
+
+  ```
+  bpf_trace_printk: dropping icmp packet from 10.200.0.2 to 8.8.8.8 (hook=0 proto=1)
+  ```
+
+- **Kernel counters:** `nstat` prints nothing, so `IpInAddrErrors` did not change. The kernel never made a routing decision for these packets.
+
+In both modes ping fails the same way, but the kernel counters show which one dropped the packets: the routing code or the BPF program.
 
 ### Other traffic is not dropped
 
@@ -148,4 +187,6 @@ The 3 ICMP packets counted 252 bytes, which is 84 bytes each. That matches ping'
 
   The verifier accepted the program. The kernel rejected only the attach parameters. With `NF_IP_PRI_FIRST + 1`, the attach succeeded and `bpftool link` showed `ip input prio -2147483647`, so only the exact value is rejected. `NF_IP_PRI_LAST` was not tested.
 - **kfunc declarations.** The generated `vmlinux.h` does not declare `bpf_dynptr_from_skb()` or `bpf_dynptr_slice()`, so `nf_drop.bpf.c` declares them with `extern ... __ksym`. libbpf resolves them against the kernel BTF when it loads the program.
-- **Global variables and the skeleton.** A non-static global variable in the BPF program is exported in the skeleton as `skel->data`. `match_ip` is `static` so that `nf_drop.c` does not need its type.
+- **Global variables and the skeleton.** A non-static global variable in the BPF program is exported in the skeleton. A writable one goes in `skel->data`, which user space can change while the program runs. A `const` one goes in `skel->rodata`, which can only be set between `nf_drop_bpf__open()` and `nf_drop_bpf__load()`. During load, libbpf freezes the `.rodata` map with `bpf_map_freeze()`.
+- **Why `volatile`.** Without `volatile`, clang treats a `const` global as a compile-time constant and puts its initial value directly into the instructions. The value set in `skel->rodata` would then have no effect. `volatile` makes the program read the variable from the map.
+- **Source address byte order.** `nf_drop.c` converts `--src` with `inet_pton()`, which returns the address in network byte order. `iphdr->saddr` is also in network byte order, so the BPF program compares them directly, on both little- and big-endian CPUs.

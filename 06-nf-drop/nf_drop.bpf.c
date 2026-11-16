@@ -20,15 +20,8 @@ extern int bpf_dynptr_from_skb(struct __sk_buff *s, __u64 flags,
 extern void *bpf_dynptr_slice(const struct bpf_dynptr *p, __u32 offset,
 			      void *buffer__opt, __u32 buffer__szk) __ksym;
 
-/* Bytes are stored in network order, so addr can be compared with
- * iphdr->saddr directly on both little- and big-endian CPUs. */
-union ipv4_addr {
-	__u32 addr;
-	__u8 bytes[4];
-};
-
-/* static keeps this variable out of the skeleton (skel->data). */
-static const union ipv4_addr match_ip = { .bytes = { 10, 200, 0, 2 } };
+const volatile __u32 drop_hook = 0;
+const volatile __u32 target_saddr = 0;
 
 SEC("netfilter")
 int nf_prog(struct bpf_nf_ctx *ctx)
@@ -63,11 +56,11 @@ int nf_prog(struct bpf_nf_ctx *ctx)
 	if (ip->version != 4)
 		return NF_ACCEPT;
 
-	if (ip->saddr != match_ip.addr)
+	if (ip->saddr != target_saddr)
 		return NF_ACCEPT;
 
 	// drop icmp packets
-	if (ip->protocol == IPPROTO_ICMP && ctx->state->hook == NF_INET_LOCAL_IN) {
+	if (ip->protocol == IPPROTO_ICMP && ctx->state->hook == drop_hook) {
 		c->drops++;
 		bpf_printk("dropping icmp packet from %pI4 to %pI4 (hook=%u proto=%u)",
 			&ip->saddr, &ip->daddr, ctx->state->hook, ip->protocol);
