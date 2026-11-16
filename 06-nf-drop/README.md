@@ -113,6 +113,15 @@ The 3 ICMP packets counted 252 bytes, which is 84 bytes each. That matches ping'
 ## Notes
 
 - **Verdict values.** `NF_DROP` is 0 and `NF_ACCEPT` is 1, as defined in `/usr/include/linux/netfilter.h`. They are macros, so they are not in `vmlinux.h`, and the program defines them itself. If you swap them by mistake, the program drops every IPv4 packet that reaches the hook until you stop it.
-- **Priority.** The kernel rejects `NF_IP_PRI_FIRST` (`INT_MIN`) and `NF_IP_PRI_LAST` (`INT_MAX`) with `-ERANGE` when the link is created. The check is in `bpf_nf_check_pf_and_hooks()` in `net/netfilter/nf_bpf_link.c`. It runs at attach time, not in the verifier.
+- **Priority.** In the kernel source, `bpf_nf_check_pf_and_hooks()` in `net/netfilter/nf_bpf_link.c` rejects a priority equal to `NF_IP_PRI_FIRST` (`INT_MIN`) or `NF_IP_PRI_LAST` (`INT_MAX`) with `-ERANGE` when the link is created.
+
+  Tested with `NF_IP_PRI_FIRST` for the LOCAL_IN link. The program loaded, the PRE_ROUTING link attached, and the LOCAL_IN attach failed:
+
+  ```
+  libbpf: prog 'nf_prog': failed to attach to netfilter: -ERANGE
+  Failed to attach LOCAL_IN: -34
+  ```
+
+  The verifier accepted the program. The kernel rejected only the attach parameters. With `NF_IP_PRI_FIRST + 1`, the attach succeeded and `bpftool link` showed `ip input prio -2147483647`, so only the exact value is rejected. `NF_IP_PRI_LAST` was not tested.
 - **kfunc declarations.** The generated `vmlinux.h` does not declare `bpf_dynptr_from_skb()` or `bpf_dynptr_slice()`, so `nf_drop.bpf.c` declares them with `extern ... __ksym`. libbpf resolves them against the kernel BTF when it loads the program.
 - **Global variables and the skeleton.** A non-static global variable in the BPF program is exported in the skeleton as `skel->data`. `match_ip` is `static` so that `nf_drop.c` does not need its type.
