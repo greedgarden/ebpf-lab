@@ -27,6 +27,45 @@ const volatile __u32 target_saddr = 0;
 SEC("xdp")
 int xdp_prog(struct xdp_md *ctx)
 {
+	void *data     = (void *)(__u64)ctx->data;
+	void *data_end = (void *)(__u64)ctx->data_end;
+
+	struct ethhdr *eth = (struct ethhdr *)data;
+	if ((void *)(eth + 1) > data_end)
+		return XDP_PASS;
+
+	if (eth->h_proto != bpf_htons(ETH_P_IP))
+		return XDP_PASS;
+
+	struct iphdr *ip = (struct iphdr *)(eth + 1);
+	if ((void *)(ip + 1) > data_end)
+		return XDP_PASS;
+
+	if (ip->saddr != target_saddr)
+		return XDP_PASS;
+
+	__u32 hook_key = CMP_HOOK_XDP;
+	struct counters *c;
+	c = bpf_map_lookup_elem(&stats, &hook_key);
+	if (!c)
+		return XDP_PASS;
+
+	if (hook_key >= CMP_HOOK_NUM)
+		return XDP_PASS;
+
+	for (int i = 0; i < DROP_PROTO_MAX && i < drop_rules[hook_key].num; i++) {
+		if (ip->protocol == drop_rules[hook_key].proto[i]) {
+			c->drops++;
+			bpf_printk("dropping packet from %pI4 to %pI4 (hook=xdp, proto=%u)",
+				&ip->saddr, &ip->daddr, ip->protocol);
+			return XDP_DROP;
+		}
+	}
+
+	c->packets++;
+	c->bytes += data_end - data;
+	bpf_printk("proto=%u src=%pI4 dst=%pI4 (hook=xdp)",
+		   ip->protocol, &ip->saddr, &ip->daddr);
 	return XDP_PASS;
 }
 
